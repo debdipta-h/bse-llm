@@ -1,0 +1,4 @@
+matplotlib
+numpy
+openai
+python-dotenv
