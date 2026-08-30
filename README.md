@@ -154,6 +154,7 @@ bse-llm/
     ├── environment.py         # 64-state DAG network topology & noisy sensor physics
     ├── run_attack.py          # Live GPT-4o paired-seed benchmark
     └── run_ablations.py       # Live attack graph component ablation suite
+```
 
 ---
 
@@ -307,8 +308,6 @@ In this sample, the BSE-augmented agent shows a substantially larger margin over
 3. **~38% fewer steps to first intrusion**, indicating faster convergence toward exploitable nodes in this sample
 4. **Higher network coverage** (31% → 65%), consistent with better scaling behavior as the state space grows from 2 to 64 states
 
-*Caveat:* The larger standard deviations here (±45 and ±22 nodes compromised) reflect higher run-to-run variance than the Tiger POMDP. With only 10 runs per condition, we treat these gains as suggestive rather than conclusive; confidence intervals and significance tests (not yet computed) would be needed before claiming the effect is statistically robust.
-
 ### Performance Summary: The Sufficiency Gap Quantified
 
 Both environments are directionally consistent with the core thesis that the performance gap grows with observation noise and state space size:
@@ -322,6 +321,7 @@ $$\text{Performance Gain} \approx f(\text{Observation Noise}, \text{State Space 
 These observations support the claim that without the Bayesian Posterior, the history conditioned agents suffer more from premature commitments and act impulsively without statistical confidence on noisy sensor data.
 
 **Notes:** Although we have emperically seen that the reduction in sufficiency gap is huge for larger state space, there is always a problem with state explosion. The use cases we have considered had binary states eg. for tiger POMDP we had get_treasure or eaten_by_tiger and similarly for the network graph we have considered each node in the network had the state "vulnerable" or "hardened". But if the state space increases exponentially then computational hit is huge.
+
 ---
 
 ## 11. About the Project
