@@ -1,0 +1,99 @@
+{
+  "config": {
+    "n_main": 40,
+    "horizon": 20,
+    "gamma": 0.95,
+    "temperature": 0.3,
+    "model": "gpt-4o",
+    "k_jsd_samples": 5,
+    "n_jsd_groups": 10
+  },
+  "results": {
+    "Reactive": {
+      "method": "Reactive",
+      "n_episodes": 40,
+      "mean_discounted_return": -12.0,
+      "ci95_lo": -25.75,
+      "ci95_hi": 1.75,
+      "std_discounted_return": 44.0,
+      "outcomes": {
+        "treasure": 32,
+        "eaten": 8
+      },
+      "avg_listens": 0.0,
+      "mean_brier": 0.3249999999999999,
+      "mean_nll": 0.5094391405753964,
+      "mean_entropy": 0.42270908780599087,
+      "avg_tokens_per_episode": 458.6,
+      "avg_latency_s_per_episode": 4.104143406474987,
+      "avg_calls_per_episode": 1.0,
+      "abstention_rate": 0.0,
+      "malformed_belief_rate": null
+    },
+    "BSE": {
+      "method": "BSE",
+      "n_episodes": 40,
+      "mean_discounted_return": 3.06348390625,
+      "ci95_lo": -4.407693705078124,
+      "ci95_hi": 8.240841003906247,
+      "std_discounted_return": 21.507257396777703,
+      "outcomes": {
+        "treasure": 38,
+        "eaten": 2
+      },
+      "avg_listens": 1.45,
+      "mean_brier": 0.23411607906979737,
+      "mean_nll": 0.36685474197058715,
+      "mean_entropy": 0.3647818212462669,
+      "avg_tokens_per_episode": 1270.0,
+      "avg_latency_s_per_episode": 9.35890961642508,
+      "avg_calls_per_episode": 2.45,
+      "abstention_rate": 0.0,
+      "malformed_belief_rate": null
+    },
+    "NL-Tracker": {
+      "method": "NL-Tracker",
+      "n_episodes": 40,
+      "mean_discounted_return": -12.0,
+      "ci95_lo": -25.75,
+      "ci95_hi": 1.75,
+      "std_discounted_return": 44.0,
+      "outcomes": {
+        "treasure": 32,
+        "eaten": 8
+      },
+      "avg_listens": 0.0,
+      "mean_brier": 0.5,
+      "mean_nll": 0.6931471805599453,
+      "mean_entropy": 0.6931471805599453,
+      "avg_tokens_per_episode": 248.55,
+      "avg_latency_s_per_episode": 0.9098401061750337,
+      "avg_calls_per_episode": 1.0,
+      "abstention_rate": 0.0,
+      "malformed_belief_rate": 0.0
+    }
+  },
+  "consistency": {
+    "Reactive": {
+      "method": "Reactive",
+      "n_pairs": 0,
+      "median_jsd": null,
+      "iqr_jsd": null,
+      "max_jsd": null
+    },
+    "BSE": {
+      "method": "BSE",
+      "n_pairs": 0,
+      "median_jsd": null,
+      "iqr_jsd": null,
+      "max_jsd": null
+    },
+    "NL-Tracker": {
+      "method": "NL-Tracker",
+      "n_pairs": 0,
+      "median_jsd": null,
+      "iqr_jsd": null,
+      "max_jsd": null
+    }
+  }
+}

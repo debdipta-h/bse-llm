@@ -1,0 +1,115 @@
+{
+  "config": {
+    "n_main": 40,
+    "horizon": 30,
+    "gamma": 0.95,
+    "temperature": 0.3,
+    "model": "gpt-4o",
+    "k_jsd_samples": 5,
+    "n_jsd_groups": 8,
+    "actions_excluded": "patch_* (unimplemented transition dynamics)"
+  },
+  "results": {
+    "Reactive": {
+      "method": "Reactive",
+      "n_episodes": 40,
+      "mean_discounted_return": -5.404095270012795,
+      "ci95_lo": -17.380727834439085,
+      "ci95_hi": 7.042662753924447,
+      "std_discounted_return": 38.85722139906115,
+      "avg_unique_nodes_compromised": 1.95,
+      "avg_successful_exploit_attempts": 1.95,
+      "avg_failed_exploit_attempts": 16.275,
+      "exploitation_success_rate": 0.10699588477366255,
+      "episodes_with_any_intrusion": 32,
+      "avg_steps_to_first_intrusion": 1.40625,
+      "avg_network_compromise_coverage": 0.32499999999999996,
+      "mean_brier": 0.879913155067294,
+      "mean_nll": 2.9632406425989033,
+      "mean_entropy": 2.954269977073468,
+      "avg_tokens_per_episode": 16680.0,
+      "avg_latency_s_per_episode": 111.60456573204961,
+      "avg_calls_per_episode": 30.825,
+      "abstention_rate": 0.006488240064882401,
+      "malformed_belief_rate": 0.0
+    },
+    "BSE": {
+      "method": "BSE",
+      "n_episodes": 40,
+      "mean_discounted_return": -2.796329025888627,
+      "ci95_lo": -16.027727626473098,
+      "ci95_hi": 10.666593377442377,
+      "std_discounted_return": 42.95186210524803,
+      "avg_unique_nodes_compromised": 2.525,
+      "avg_successful_exploit_attempts": 2.525,
+      "avg_failed_exploit_attempts": 15.975,
+      "exploitation_success_rate": 0.13648648648648648,
+      "episodes_with_any_intrusion": 36,
+      "avg_steps_to_first_intrusion": 2.5833333333333335,
+      "avg_network_compromise_coverage": 0.4208333333333333,
+      "mean_brier": 0.9083449175271832,
+      "mean_nll": 3.2393879809060038,
+      "mean_entropy": 3.087285093612417,
+      "avg_tokens_per_episode": 23009.675,
+      "avg_latency_s_per_episode": 140.4658382668246,
+      "avg_calls_per_episode": 32.675,
+      "abstention_rate": 0.009181331293037491,
+      "malformed_belief_rate": 0.0
+    },
+    "NL-Tracker": {
+      "method": "NL-Tracker",
+      "n_episodes": 40,
+      "mean_discounted_return": 7.869795927524772,
+      "ci95_lo": -5.233979071055232,
+      "ci95_hi": 21.052591481717865,
+      "std_discounted_return": 42.76492991896635,
+      "avg_unique_nodes_compromised": 2.45,
+      "avg_successful_exploit_attempts": 2.45,
+      "avg_failed_exploit_attempts": 13.075,
+      "exploitation_success_rate": 0.15780998389694043,
+      "episodes_with_any_intrusion": 35,
+      "avg_steps_to_first_intrusion": 2.085714285714286,
+      "avg_network_compromise_coverage": 0.4083333333333333,
+      "mean_brier": 0.7787510116012876,
+      "mean_nll": 2.750362600339145,
+      "mean_entropy": 2.7000737768430185,
+      "avg_tokens_per_episode": 17442.525,
+      "avg_latency_s_per_episode": 56.60796540927413,
+      "avg_calls_per_episode": 30.025,
+      "abstention_rate": 0.0,
+      "malformed_belief_rate": 0.0
+    }
+  },
+  "consistency": {
+    "Reactive": {
+      "method": "Reactive",
+      "n_pairs": 24,
+      "median_jsd": 0.0,
+      "iqr_jsd": [
+        0.0,
+        0.0
+      ],
+      "max_jsd": 0.6931471805330074
+    },
+    "BSE": {
+      "method": "BSE",
+      "n_pairs": 24,
+      "median_jsd": 0.0,
+      "iqr_jsd": [
+        0.0,
+        0.2294481163373306
+      ],
+      "max_jsd": 0.6931471805330074
+    },
+    "NL-Tracker": {
+      "method": "NL-Tracker",
+      "n_pairs": 24,
+      "median_jsd": 0.043152310867767094,
+      "iqr_jsd": [
+        0.0,
+        0.6931471805204548
+      ],
+      "max_jsd": 0.6931471805330074
+    }
+  }
+}

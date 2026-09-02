@@ -1,0 +1,87 @@
+{
+  "config": {
+    "n_ablation": 25,
+    "horizon": 20,
+    "gamma": 0.95,
+    "model": "gpt-4o"
+  },
+  "results": {
+    "Standard_BSE": {
+      "ablation": "Standard_BSE",
+      "n_episodes": 25,
+      "mean_discounted_return": -9.22522575,
+      "ci95_lo": -26.262670375,
+      "ci95_hi": 3.8663560906249956,
+      "std_discounted_return": 39.22154912304842,
+      "outcomes": {
+        "treasure": 21,
+        "eaten": 4
+      },
+      "avg_listens": 1.28,
+      "mean_brier": 0.24967517268465064,
+      "mean_nll": 0.38513181146257697,
+      "mean_entropy": 0.3503805610711621,
+      "avg_tokens_per_episode": 1203.12,
+      "avg_calls_per_episode": 2.28,
+      "abstention_rate": 0.0
+    },
+    "AB1_No_Predict": {
+      "ablation": "AB1_No_Predict",
+      "n_episodes": 25,
+      "mean_discounted_return": -0.1911053749999999,
+      "ci95_lo": -12.7638430625,
+      "ci95_hi": 8.312807499999998,
+      "std_discounted_return": 27.84742011860585,
+      "outcomes": {
+        "treasure": 23,
+        "eaten": 2
+      },
+      "avg_listens": 1.4,
+      "mean_brier": 0.2553276766812306,
+      "mean_nll": 0.39388631125148926,
+      "mean_entropy": 0.3677993859833761,
+      "avg_tokens_per_episode": 1241.0,
+      "avg_calls_per_episode": 2.4,
+      "abstention_rate": 0.0
+    },
+    "AB2_No_Observe": {
+      "ablation": "AB2_No_Observe",
+      "n_episodes": 25,
+      "mean_discounted_return": -16.0757070253007,
+      "ci95_lo": -23.290647765609656,
+      "ci95_hi": -12.106191758463298,
+      "std_discounted_return": 17.17166304424792,
+      "outcomes": {
+        "timeout": 23,
+        "eaten": 1,
+        "treasure": 1
+      },
+      "avg_listens": 19.04,
+      "mean_brier": 0.5,
+      "mean_nll": 0.6931471805599453,
+      "mean_entropy": 0.6931471805599453,
+      "avg_tokens_per_episode": 9444.64,
+      "avg_calls_per_episode": 19.12,
+      "abstention_rate": 0.0
+    },
+    "AB9_High_Temp": {
+      "ablation": "AB9_High_Temp",
+      "n_episodes": 25,
+      "mean_discounted_return": -8.825205375000001,
+      "ci95_lo": -25.811500874999997,
+      "ci95_hi": 4.3670362499999955,
+      "std_discounted_return": 39.39473236983035,
+      "outcomes": {
+        "treasure": 21,
+        "eaten": 4
+      },
+      "avg_listens": 1.0,
+      "mean_brier": 0.2735472726453763,
+      "mean_nll": 0.4188702630268861,
+      "mean_entropy": 0.3635725783752518,
+      "avg_tokens_per_episode": 1043.76,
+      "avg_calls_per_episode": 2.0,
+      "abstention_rate": 0.0
+    }
+  }
+}

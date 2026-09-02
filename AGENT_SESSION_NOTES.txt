@@ -1,0 +1,252 @@
+BSE-LLM REPOSITORY: README METRICS AUDIT & FIX -- SESSION NOTES
+================================================================
+Date: 2026-09-02
+Scope: README.md Section 10 ("Empirical Results & Quantitative Analysis")
+
+--------------------------------------------------------------
+1. WHY THIS WORK WAS DONE
+--------------------------------------------------------------
+The user suspected the metrics in README.md Section 10 were wrong/fabricated
+and asked for an explanation of how they were calculated. Investigation of
+the codebase (core_engine.py, tiger_pomdp/, red_team_graph/, logs/) found:
+
+  - No code anywhere computed several of the reported metrics: standard
+    deviations, "Avg. Listening Actions", "Policy Drift", "Exploitation
+    Success Rate", "Avg. Steps to First Intrusion", "Network Compromise
+    Coverage". Only reward totals and win/loss counts were ever tracked.
+  - The claimed sample size (n=10 paired-seed runs) did not match the code
+    (tiger_pomdp/run_tiger.py used num_seeds=200; red_team_graph/run_attack.py
+    used num_seeds=600).
+  - The claimed Tiger horizon (T=20) did not match the code (horizon=15 was
+    actually used in run_tiger.py's __main__).
+  - Saved plot images (tiger_results_live.png, attack_graph_real_llm.png)
+    partially matched the README's win/loss counts but not the other
+    numbers, confirming those two counts were probably real but everything
+    else in the tables was unsupported.
+
+Conclusion: the numbers were a mix of loosely-inspired-by-real-runs and
+outright invented values. The user chose option (A): rebuild real
+instrumentation, rerun live against GPT-4o, and replace the section with
+numbers that are actually reproducible from code + logs in this repo.
+
+--------------------------------------------------------------
+2. SCOPE DECIDED WITH THE USER (see chat for the negotiation)
+--------------------------------------------------------------
+Full paper protocol (6 baselines x N=300 x 3 LLM seeds x 10 ablations) would
+need ~10^5 live paid API calls -- not feasible in one session. Agreed scope:
+
+  - 3 methods: Reactive (latest observation only), BSE (exact Bayes
+    posterior), NL-Tracker (LLM maintains its own free-text belief every
+    turn -- tests "does ANY belief help, or specifically a PROBABILISTIC
+    one"). Chain-of-Thought / ReAct / QMDP / POMCP baselines from the paper
+    are NOT implemented.
+  - N=40 paired seeds for the main comparison, N=25 for ablations, single
+    LLM-sampling seed (paper uses N=300 x 3).
+  - Ablations actually rerun with real metrics: AB1 (drop prediction step),
+    AB2 (drop observation step), AB9 (temperature=1.0). AB3-AB8, AB10 are
+    NOT implemented.
+  - All 4 metric families from the paper's Sec VI.C: task return (bootstrap
+    95% CI), belief calibration (Brier/NLL/entropy vs. true latent state),
+    decision consistency (Jensen-Shannon divergence over belief-equivalent
+    history pairs -- reduced-cost version of the paper's protocol, see
+    below), and compute cost (tokens/latency/calls/abstentions).
+  - Concurrency: ThreadPoolExecutor, 5 workers per script, to keep live runs
+    to tens of minutes instead of many hours.
+
+--------------------------------------------------------------
+3. NEW FILES CREATED (all in the repo root / package dirs)
+--------------------------------------------------------------
+  eval_metrics.py
+      Shared, thread-safe helpers used by all four eval scripts:
+        - bootstrap_mean_ci(data): percentile bootstrap 95% CI on the mean.
+        - brier(belief, true_idx), nll(...), entropy(belief): calibration.
+        - jsd(p, q): Jensen-Shannon divergence between two action dists.
+        - action_distribution(samples, actions): empirical dist from samples.
+        - llm_call(client, system_prompt, user_prompt, model, temperature,
+          parser, default_action, return_text=False): stateless single
+          decision call replicating core_engine.LLMPolicy's fallback
+          protocol (one resample at temp=0.0 on malformed output, then a
+          default action), but returns (action, meta) instead of mutating
+          shared instance state -- necessary because core_engine.LLMPolicy
+          is NOT thread-safe (it stores last-call state on self) and these
+          scripts run many episodes concurrently.
+
+  tiger_pomdp/run_full_eval.py
+      Live eval producing the Tiger POMDP numbers in README Sec 10.
+      Reactive / BSE / NL-Tracker episode runners, horizon=20, gamma=0.95.
+      Tracks a parallel "genie" exact-Bayes belief for every method (even
+      Reactive/NL-Tracker, which don't see it) purely for the evaluator's
+      own calibration/consistency scoring against ground truth -- this
+      matches the paper's protocol of oracle-only-to-evaluator access.
+      Decision-consistency: groups steps by rounded genie belief; where a
+      belief bucket contains >=2 distinct raw prompts, resamples each K=5
+      times and computes JSD across them.
+      Env vars: TIGER_N_MAIN, TIGER_MAX_WORKERS, TIGER_N_JSD_GROUPS,
+      TIGER_K_JSD_SAMPLES (all have sane defaults; used for smoke tests).
+
+  tiger_pomdp/run_ablations_eval.py
+      Same instrumentation, reruns AB1_No_Predict / AB2_No_Observe /
+      AB9_High_Temp / Standard_BSE with N=25. Imports SYSTEM_PROMPT and
+      format_bse_prompt from run_full_eval.py so ablations use the exact
+      same (fair, non-spoon-fed) prompt as the main run.
+
+  red_team_graph/run_full_eval.py
+      Live eval producing the K=6 attack-graph numbers. horizon=30, full
+      episode length (see bug #2 below for why episodes no longer break on
+      first exploit). `patch` excluded from the action menu shown to the
+      LLM because its transition dynamics are an unimplemented TODO in
+      environment.py (T is the identity matrix for every action). Reward
+      constants match the paper's Sec VI.A.b exactly (R_scan=-0.5,
+      R_exploit_success=+20, R_exploit_fail=-5, R_wait=-0.1), not the
+      original demo script's undocumented values.
+      Env vars: ATTACK_N_MAIN, ATTACK_MAX_WORKERS, ATTACK_N_JSD_GROUPS,
+      ATTACK_K_JSD_SAMPLES.
+
+  red_team_graph/run_ablations_eval.py
+      Same idea as the Tiger ablations script, N=25, imports shared
+      constants/format functions from run_full_eval.py.
+
+  monitor_eval.sh
+      Bash script to check status of the 4 background (nohup) live-eval
+      jobs: whether the process is still alive (pgrep -f), whether it
+      finished (result JSON exists), latest "completed X/Y episodes" line,
+      and any traceback/error/rate-limit lines in its output log. Usage:
+      ./monitor_eval.sh (one-shot) or ./monitor_eval.sh --watch (30s loop).
+
+--------------------------------------------------------------
+4. THREE REAL BUGS FOUND AND FIXED DURING THIS WORK
+--------------------------------------------------------------
+(All found via live smoke tests at tiny N before committing to the full
+N=40/N=25 runs -- see chat history for the diagnostic reasoning.)
+
+  BUG 1 -- Prompt fairness (Tiger, and by extension the whole comparison)
+    The original format_bse_prompt (copied from run_tiger.py) hard-coded
+    the exact decision arithmetic: "opening at 85% confidence yields
+    0.85*10+0.15*-100=-6.5 ... only open above 95% confidence". This
+    spoon-feeds BSE the answer instead of letting the LLM derive it from
+    the belief + a generic objective, while Reactive/NL-Tracker get no such
+    hint. Fixed: single identical system prompt across all 3 methods
+    ("maximize expected reward given the information below"); the BSE user
+    prompt now shows only the belief, no worked-out thresholds.
+
+  BUG 2 -- Attack-graph reward-farming
+    Exploiting an already-compromised node paid full +20 reward EVERY time
+    (no depletion), so the reward-maximizing "strategy" degenerated into
+    spamming exploit on one lucky node forever instead of exploring the
+    network. This also required removing the original script's behavior of
+    ending the episode on the first exploit attempt (which made "coverage"
+    and "avg nodes compromised" impossible to measure honestly). Fixed:
+    repeat exploits on an already-owned node now pay 0 reward; episodes run
+    the full horizon; the prompt tells the agent which nodes are already
+    compromised.
+
+  BUG 3 -- Attack-graph myopic objective
+    Even after fixing bug 2, BSE/NL-Tracker still exploited blindly ~29/30
+    steps (belief entropy stuck at exactly ln(64), i.e. zero scans ever
+    happened). Root cause: each node's vulnerability is drawn uniform 50/50,
+    and the "maximize immediate reward" system prompt (matching README
+    Sec 7's literal wording) makes blind exploit rational in expectation
+    (0.5*20 - 0.5*5 = +7.5 > scan's -0.5) regardless of belief quality --
+    the model doesn't need multi-step lookahead reasoning to see this, and
+    an EXPLICIT numeric belief (as shown to BSE/NL-Tracker) apparently
+    invites this exact myopic EV calculation more than Reactive's bare
+    observation does. Fixed (with explicit user sign-off, not silently):
+    changed the attack-graph system prompt to ask for expected discounted
+    return over the remaining horizon instead of immediate reward, applied
+    identically to all 3 methods, plus added "STEPS REMAINING: N" to every
+    prompt to make the multi-step framing concrete. This is a documented
+    deviation from README Sec 7's literal wording for the Tiger domain,
+    made for methodological soundness (all 3 methods still share one
+    prompt), not to favor BSE.
+
+--------------------------------------------------------------
+5. FINAL LIVE RESULTS (see README.md Section 10 for full tables + prose)
+--------------------------------------------------------------
+Tiger POMDP (N=40, horizon=20):
+  Reactive:    80.0% success, mean return -12.00, 0 listens avg
+  BSE:         95.0% success, mean return  +3.06, 1.45 listens avg  <- clear win
+  NL-Tracker:  80.0% success, mean return -12.00, 0 listens avg (identical
+               to Reactive -- having "a" belief with no format guarantee
+               helped it not at all)
+
+Tiger ablations (N=25): AB1 ~= Standard (expected: listen's transition is
+already identity in this env). AB2 -> exactly ln(2) entropy forever, 23/25
+episodes time out still listening (textbook open-loop failure).
+
+Attack graph (N=40, horizon=30, after bugs 2+3 fixed):
+  Reactive:    return -5.40,  coverage 32.5%, success rate 10.7%
+  BSE:         return -2.80,  coverage 42.1%, success rate 13.6%
+  NL-Tracker:  return +7.87,  coverage 40.8%, success rate 15.8%
+  ALL THREE 95% CIs OVERLAP HEAVILY -- returns are NOT statistically
+  distinguishable at this N. The one metric that DOES clearly separate BSE
+  from NL-Tracker is decision-consistency (JSD): BSE median 0 (tight IQR),
+  NL-Tracker median 0.043 with IQR reaching ln(2) -- NL-Tracker's free-text
+  belief is measurably less self-consistent than BSE's exact posterior.
+
+Attack graph ablations (N=25): AB2 -> exactly ln(64) entropy forever
+(confirmed open-loop). AB1 shows almost NO degradation, which CONTRADICTS
+the paper's prediction of "severe AB1 degradation on the attack graph" --
+but this is because environment.py's transition kernel T is literally the
+identity matrix for every action (patch/exploit dynamics are an
+unimplemented TODO), so dropping the prediction step drops a no-op. This is
+a known environment limitation, documented in the README, not a surprising
+finding.
+
+Also observed and documented (not hidden): the ablation run's "Standard_BSE"
+config used the identical prompt/temperature as the main run's "BSE" row but
+produced different numbers even on overlapping seeds 0-24 -- gpt-4o is not
+deterministic across separate API calls at temperature 0.3, a limitation the
+paper itself flags in Section VIII.C.
+
+--------------------------------------------------------------
+6. KNOWN LIMITATIONS / HONEST GAPS (also documented in README Sec 10)
+--------------------------------------------------------------
+  - N=40/25 single-seed is much smaller than the paper's N=300 x 3. CIs are
+    wide, especially in the attack graph.
+  - Only 3 of 6 paper baselines implemented (no CoT, ReAct, QMDP, POMCP).
+  - Only AB1/AB2/AB9 of the paper's 10 ablations implemented.
+  - Decision-consistency (JSD) is a reduced, opportunistic version of the
+    paper's protocol (paper: 200 pre-selected pairs x K=32 resamples; here:
+    up to 8-10 belief-collision groups found from the main run's own
+    trajectories, K=5 resamples each). Tiger found ZERO qualifying groups at
+    N=40 (reported as "not measured", not as zero).
+  - red_team_graph/environment.py still has unimplemented `patch` action
+    dynamics and node-dependency lateral-movement topology (T = identity
+    for every action). This caps what AB1 can demonstrate there. Node
+    vulnerability is drawn i.i.d. per node, not propagated through topology.
+  - The original demo scripts (tiger_pomdp/run_tiger.py, run_ablations.py;
+    red_team_graph/run_attack.py, run_ablations.py) were NOT modified and
+    still contain the old num_seeds/horizon mismatches and (for
+    run_attack.py) the reward-farming bug. They're now explicitly labeled in
+    the README as "lightweight demos, not the source of Section 10 numbers".
+
+--------------------------------------------------------------
+7. HOW TO REPRODUCE / EXTEND IN A FUTURE SESSION
+--------------------------------------------------------------
+  Live main comparison:
+    python tiger_pomdp/run_full_eval.py
+    python red_team_graph/run_full_eval.py
+  Live ablations:
+    python tiger_pomdp/run_ablations_eval.py
+    python red_team_graph/run_ablations_eval.py
+  All four accept env-var overrides for N and worker count (see top of each
+  file) for cheap smoke tests before a full paid run.
+  Background + monitor:
+    nohup python3 <script> > /tmp/<name>.out 2>&1 &
+    ./monitor_eval.sh --watch
+  Results land in logs/<date>/*_results.json (raw episode-level data is NOT
+  currently saved, only per-method aggregates -- would need to add
+  per-episode JSON dumps if finer-grained reanalysis is wanted later).
+
+  Natural next steps if resuming this work:
+    - Implement the missing baselines (CoT, ReAct, QMDP, POMCP) and/or
+      remaining ablations (AB3-AB8, AB10) if a larger budget is available.
+    - Increase N and/or add the paper's 3x LLM-sampling-seed repetition for
+      tighter CIs, especially in the attack graph where N=40 wasn't enough
+      to separate the methods.
+    - Implement real patch/exploit transition dynamics and node-dependency
+      topology in red_team_graph/environment.py so AB1 can actually show
+      the paper's predicted effect there.
+    - Consider running a proper Wilcoxon signed-rank test (scipy not
+      currently installed) instead of/alongside bootstrap CIs, matching the
+      paper's stated statistical protocol.

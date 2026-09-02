@@ -86,8 +86,9 @@ The Tiger POMDP is the foundational 2-state environment that highlights the fata
 ### 2. The $K=6$ Red-Team Attack Graph
 The red-team environment scales the challenge by placing the agent in a parametric directed acyclic graph representing host-service nodes in an enterprise network.
 * **Graph Structure (Nodes & Edges):** For the medium-scale configuration ($K=6$), the network consists of 6 distinct nodes. Each node carries a binary latent state: it is either `vulnerable` or `hardened`. This creates a massive latent space of 64 possible network configurations. The directed edges represent the network topology and lateral movement pathways.
-* **Actions:** The agent executes actions to target specific nodes in the graph.
+* **Actions:** The agent executes actions to target specific nodes in the graph (`scan_i`, `exploit_i`, `wait`).
 * **Noisy Observations:** When the agent scans a node, it receives a binary report. The scanner is imperfect, possessing a false-positive rate of 0.10 and a false-negative rate of 0.15.
+* **Known simplification (current `environment.py`):** the `patch` action and the node-dependency lateral-movement structure are unimplemented placeholders (transition kernel `T` is the identity matrix for every action). Node vulnerability is drawn i.i.d. uniform per node rather than propagated through the graph topology. The live results in Section 10 exclude `patch` from the action menu and are honest about this limitation rather than simulating an effect that isn't implemented.
 
 ---
 
@@ -133,7 +134,8 @@ All live API requests use the following fixed parameters:
 * **Sampling Temperature:** $\tau = 0.3$ (held fixed across non-ablation runs).
 * **Top-$p$ Nucleus Sampling:** $0.95$.
 * **Fallback Protocol:** If the LLM generates an unparseable response, it is resampled exactly once at $\tau = 0.0$ before defaulting.
-* **System Prompt:** *"Select the action that maximizes the expected immediate reward under the belief provided below. Break ties uniformly."*
+* **System Prompt (Tiger):** *"Select the action that maximizes the expected immediate reward given the information provided below. Break ties uniformly."* Identical wording is used for all three methods evaluated (Reactive / BSE / NL-Tracker) — only the state representation in the user prompt differs.
+* **System Prompt (Attack Graph):** A myopic "immediate reward" framing was tried first and produces a degenerate result: at a 50% per-node vulnerability prior, blind exploitation has positive one-step expected value regardless of belief quality, so all three methods just exploit blindly. The system prompt used for the reported numbers instead asks the LLM to *"maximize your expected discounted return over the remaining steps of the episode, not just the immediate reward"*, applied identically across all three methods. This is a documented deviation from a literal single system-prompt-for-everything design, made for methodological reasons, not to favor any one method.
 
 ---
 
@@ -142,18 +144,25 @@ All live API requests use the following fixed parameters:
 ```text
 bse-llm/
 ├── core_engine.py             # Shared POMDPModel dataclass, 2-step Bayes filter, and LLMPolicy wrapper
+├── eval_metrics.py            # Bootstrap CI, Brier/NLL/entropy, JSD, and instrumented LLM-call helper
+├── monitor_eval.sh            # Status monitor for the background live-eval jobs below
 ├── requirements.txt           # Project dependencies
 ├── README.md                  # Comprehensive architectural and empirical documentation
 │
 ├── tiger_pomdp/               # Canonical 2-State Benchmark
 │   ├── environment.py         # Transition (T), Observation (Z), and Reward (R) matrices
-│   ├── run_tiger.py           # Live GPT-4o comparison
-│   └── run_ablations.py       # Live ablation suite (AB1, AB2, AB9 sweeps)
+│   ├── run_tiger.py           # Lightweight demo: BSE vs. reactive, no metric instrumentation
+│   ├── run_ablations.py       # Lightweight demo ablation sweep (no metric instrumentation)
+│   ├── run_full_eval.py       # Source of the Section 10 numbers: Reactive/BSE/NL-Tracker,
+│   │                          # bootstrap CI, calibration, decision-consistency, compute cost
+│   └── run_ablations_eval.py  # Source of the Section 10 ablation numbers (AB1/AB2/AB9)
 │
 └── red_team_graph/            # Medium-Scale K=6 Attack Graph Benchmark
     ├── environment.py         # 64-state DAG network topology & noisy sensor physics
-    ├── run_attack.py          # Live GPT-4o paired-seed benchmark
-    └── run_ablations.py       # Live attack graph component ablation suite
+    ├── run_attack.py          # Lightweight demo (has a known reward-farming bug, see Sec. 10)
+    ├── run_ablations.py       # Lightweight demo ablation sweep (no metric instrumentation)
+    ├── run_full_eval.py       # Source of the Section 10 numbers (full horizon, no early break)
+    └── run_ablations_eval.py  # Source of the Section 10 ablation numbers (AB1/AB2/AB9)
 ```
 
 ---
@@ -220,6 +229,19 @@ python red_team_graph/run_attack.py
 python red_team_graph/run_ablations.py
 ```
 
+### Reproducing the Section 10 Numbers
+
+The scripts above (`run_tiger.py`, `run_attack.py`, `run_ablations.py`) are lightweight demos with no statistical instrumentation. The numbers reported in Section 10 come from a separate set of scripts that add bootstrap confidence intervals, belief calibration (Brier/NLL/entropy), decision-consistency (JSD) probes, and compute-cost tracking, and add a third baseline (**NL-Tracker**, a free-text belief tracker) alongside Reactive and BSE:
+
+```bash
+python tiger_pomdp/run_full_eval.py          # main comparison (Reactive / BSE / NL-Tracker)
+python tiger_pomdp/run_ablations_eval.py     # AB1 / AB2 / AB9 with the same metrics
+python red_team_graph/run_full_eval.py       # main comparison, full 30-step horizon
+python red_team_graph/run_ablations_eval.py  # AB1 / AB2 / AB9 with the same metrics
+```
+
+Sample sizes and worker concurrency are configurable via environment variables (e.g. `TIGER_N_MAIN`, `ATTACK_N_MAIN`, `TIGER_MAX_WORKERS`) — see the top of each script. These are long-running, paid API calls; `monitor_eval.sh` can check on background runs launched with `nohup`.
+
 ### Expected Output
 
 Each run produces:
@@ -265,62 +287,100 @@ action = policy.act(belief)
 
 ## 10. Empirical Results & Quantitative Analysis
 
-This section presents concrete quantitative results from live GPT-4o experiments across both benchmark environments, demonstrating the Sufficiency Gap empirically.
+This section presents live GPT-4o results from `tiger_pomdp/run_full_eval.py` and `red_team_graph/run_full_eval.py` (raw logs and JSON results under `logs/2026-09-02/`). It replaces an earlier version of this section whose numbers could not be reproduced from the code in this repository (no instrumentation existed for several of the metrics it reported, and its stated sample size (n=10) and Tiger horizon (20) did not match what the scripts actually ran). See the note at the end of this section for a full account of what changed and why.
+
+**Scope of this evaluation, and why it's narrower than the accompanying paper:** the paper's methodology (Section VI) specifies six baselines (Reactive, Chain-of-Thought, ReAct, a natural-language belief tracker, QMDP, POMCP), four metric families evaluated over $N=300$ paired seeds × 3 LLM-sampling seeds, and ten ablations. Running that exact protocol against a live, paid GPT-4o endpoint would require on the order of $10^5$ API calls. What's reported below is a deliberately reduced live run: three methods (**Reactive**, **BSE**, and **NL-Tracker** — the free-text belief tracker, chosen because it directly tests "does *any* belief help, or specifically a *probabilistic* one") over $N=40$ paired seeds for the main comparison and $N=25$ seeds for the AB1/AB2/AB9 ablations, single LLM-sampling seed, `gpt-4o` at $\tau=0.3$. Chain-of-Thought, ReAct, QMDP, and POMCP baselines, and AB3–AB8/AB10, are not implemented in this repository.
 
 ### Tiger POMDP: 2-State Canonical Benchmark
 
-**Setup:** 20-step horizon, paired-seed evaluation, 10 independent runs per agent variant.
+**Setup:** 20-step horizon, $\gamma=0.95$, $N=40$ paired seeds per method.
 
 **Key Metrics:**
 
-| Metric | Reactive LLM | BSE + LLM | Improvement |
+| Metric | Reactive | BSE | NL-Tracker |
 | :--- | :--- | :--- | :--- |
-| **Avg. Cumulative Reward** | 170.2 ± 8.5 | 189.8 ± 6.3 | **+11.6%** |
-| **Treasure Discoveries (Correct Opens)** | 170 | 190 | **+11.8%** |
-| **Tiger Encounters (Incorrect Opens)** | 25 | 5 | **-80.0%** |
-| **Avg. Listening Actions** | 8.2 | 14.1 | **+71.9%** |
-| **Policy Drift (Cross-Run Variance)** | 0.34 | 0.08 | **-76.5%** |
+| **Success Rate (treasure found)** | 32/40 (80.0%) | 38/40 (95.0%) | 32/40 (80.0%) |
+| **Avg. Discounted Return (95% bootstrap CI)** | −12.00 [−25.75, 1.75] | **3.06** [−4.41, 8.24] | −12.00 [−25.75, 1.75] |
+| **Avg. Listen Actions** | 0.00 | 1.45 | 0.00 |
+| **Mean Brier Score** | 0.325 | **0.234** | 0.500 |
+| **Mean NLL** | 0.509 | **0.367** | 0.693 |
+| **Mean Belief Entropy** | 0.423 | **0.365** | 0.693 |
+| **Avg. Tokens / Episode** | 459 | 1,270 | 249 |
+| **Avg. LLM Calls / Episode** | 1.00 | 2.45 | 1.00 |
+| **Decision-Consistency (JSD)** | not enough belief-collision samples at this $N$ | not enough belief-collision samples at this $N$ | not enough belief-collision samples at this $N$ |
 
 **Interpretation:**
-Across these 10 paired-seed runs, the BSE-augmented LLM shows consistent gains over the reactive baseline:
-1. **~1.7× more listen actions** on average before committing to opening a door, consistent with the hypothesis that explicit belief tracking allows confidence to compound before a terminal action is taken
-2. **80% fewer tiger encounters** in this sample, indicating a reduction in premature commitment rather than its complete elimination
-3. **Lower cross-run policy drift** (0.34 vs. 0.08), suggesting more consistent action selection across semantically equivalent histories when conditioned on the Bayesian posterior
+- Reactive and NL-Tracker produced **identical** aggregate outcomes (32/40, mean return −12.00). Both averaged **zero** listen actions: given only the latest observation (Reactive) or an initial 50/50 belief it never bothers to refine before acting (NL-Tracker), the model opens a door on the very first turn in every one of the 40 episodes, effectively wagering on the raw 85%-accurate sensor reading. That matches: opening immediately on a single observation succeeds ≈85% of the time in theory, and 32/40 = 80% is consistent with that within sampling noise.
+- BSE, given only the exact Bayes posterior (no explicit numeric decision threshold in its prompt — see the fairness note below), listens 1.45 times on average before committing, and reaches a materially higher success rate (95.0%) and a positive expected return, vs. both baselines' negative expected return.
+- **NL-Tracker earned no benefit from having "a" belief representation.** Despite explicitly tracking and restating its own belief every turn, its behavior (and outcomes) were indistinguishable from Reactive, which is not given any belief at all. This is consistent with the paper's hypothesis that the *format* of the belief (exact numeric posterior vs. free text) matters, not merely its presence — though a single run at N=40 is not strong evidence on its own.
+- The decision-consistency (JSD) probe found zero belief-collision pairs at this sample size for all three methods (see Methodology Notes) — not measured, rather than assumed to be zero.
+
+**Ablation results ($N=25$ seeds each, same metrics):**
+
+| Ablation | Success Rate | Avg. Return | Avg. Listens | Mean Entropy |
+| :--- | :--- | :--- | :--- | :--- |
+| Standard BSE | 21/25 (84.0%) | −9.23 | 1.28 | 0.350 |
+| AB1 (drop prediction step) | 23/25 (92.0%) | −0.19 | 1.40 | 0.368 |
+| AB2 (drop observation step) | 1/25 (4.0%, 23 timeouts) | −16.08 | 19.04 | 0.693 (=ln 2, uniform forever) |
+| AB9 (temperature 1.0) | 21/25 (84.0%) | −8.83 | 1.00 | 0.364 |
+
+- **AB1** is nearly indistinguishable from Standard BSE, exactly as expected: Tiger's `listen` transition is already the identity matrix, so dropping the prediction step only matters after a door-opening reset, which never recurs within an episode.
+- **AB2** produces a clean, deterministic failure mode: with no observation correction, the belief never leaves the uniform prior (entropy pinned at exactly $\ln 2$), the LLM sees an identical prompt every turn, and 23/25 episodes simply time out still listening — a textbook confirmation of "open-loop" degradation.
+- Note that this ablation run and the main run's "BSE" row used the *same* prompt/temperature configuration but produced different numbers (84.0% vs. 95.0% success on overlapping seeds 0–24). This is expected: even at temperature 0.3, `gpt-4o`'s responses are not deterministic across separate API calls, a limitation the accompanying paper explicitly flags (Section VIII.C).
 
 ### Red-Team Attack Graph: 64-State K=6 Network Topology
 
-**Setup:** A directed acyclic graph representing an enterprise network with $K=6$ host-service nodes. Each node carries a binary latent state (either vulnerable or hardened), which creates a full latent state space of 64 possible network configurations ($|S| = 2^K$). The environment features noisy sensors (a 10% false-positive rate and a 15% false-negative rate) and operates on a 30-step horizon.
+**Setup:** 30-step horizon (fixed — episodes no longer terminate on the first exploit attempt; see Methodology Notes), $\gamma=0.95$, $N=40$ paired seeds per method, `patch` excluded from the action menu (unimplemented dynamics, see Section 4).
 
 **Key Metrics:**
 
-| Metric | Reactive LLM | BSE + LLM | Improvement |
+| Metric | Reactive | BSE | NL-Tracker |
 | :--- | :--- | :--- | :--- |
-| **Avg. Nodes Compromised** | 330 ± 45 | 530 ± 22 | **+60.6%** |
-| **Exploitation Success Rate** | 54.8% | 91.3% | **+36.5%** |
-| **Failed Exploit Attempts** | 270 | 50 | **-81.5%** |
-| **Avg. Steps to First Intrusion** | 6.8 | 4.2 | **-38.2%** |
-| **Network Compromise Coverage** | 31% | 65% | **+109.7%** |
+| **Avg. Discounted Return (95% bootstrap CI)** | −5.40 [−17.4, 7.0] | −2.80 [−16.0, 10.7] | 7.87 [−5.2, 21.1] |
+| **Avg. Unique Nodes Compromised (of 6)** | 1.95 | 2.53 | 2.45 |
+| **Exploitation Success Rate** | 10.7% | 13.6% | 15.8% |
+| **Episodes With ≥1 Intrusion** | 32/40 (80.0%) | 36/40 (90.0%) | 35/40 (87.5%) |
+| **Avg. Steps to First Intrusion** | 1.41 | 2.58 | 2.09 |
+| **Network Compromise Coverage** | 32.5% | 42.1% | 40.8% |
+| **Mean Brier Score** | 0.880 | 0.908 | 0.779 |
+| **Mean Belief Entropy** | 2.95 | 3.09 | 2.70 |
+| **Avg. Tokens / Episode** | 16,680 | 23,010 | 17,443 |
+| **Avg. LLM Calls / Episode** | 30.8 | 32.7 | 30.0 |
+| **Decision-Consistency JSD** (median [IQR], max; $n=24$ pairs) | 0.0 [0.0, 0.0], max 0.693 | 0.0 [0.0, 0.229], max 0.693 | **0.043** [0.0, 0.693], max 0.693 |
 
-**Interpretation:**
-In this sample, the BSE-augmented agent shows a substantially larger margin over the reactive baseline than in the Tiger POMDP:
-1. **~60% more node compromises** on average, a pattern consistent with (though not proof of) more accurate belief tracking under noisy sensor feedback — isolating this cause would require an ablation that varies belief accuracy while holding all other components fixed
-2. **81.5% fewer failed exploits**, suggesting the LLM is acting on aggregated probabilistic evidence rather than single noisy scan reports, though other factors (e.g., prompt structure, model confidence calibration) could also contribute
-3. **~38% fewer steps to first intrusion**, indicating faster convergence toward exploitable nodes in this sample
-4. **Higher network coverage** (31% → 65%), consistent with better scaling behavior as the state space grows from 2 to 64 states
+**Interpretation — this does *not* cleanly replicate the Tiger result, and we report that honestly:**
+- All three methods' 95% CIs overlap heavily. At this sample size, **none of the return differences are statistically distinguishable** — BSE and NL-Tracker point estimates are higher than Reactive's, but the overlap is large enough that this could be noise.
+- BSE does show the highest coverage (42.1% vs. Reactive's 32.5%) and highest episodes-with-intrusion rate (90.0%), consistent with more deliberate scanning before committing (it also takes longer to land its first intrusion: 2.58 steps vs. Reactive's 1.41, suggesting it scans more before its first exploit attempt).
+- **Decision consistency is the one metric where BSE and NL-Tracker clearly separate**: NL-Tracker's median JSD (0.043) and IQR reaching 0.693 (= $\ln 2$, i.e., completely different action for the same underlying belief) show its free-text belief format is measurably less consistent under Axiom A4 than BSE's exact numeric posterior (median 0, tighter IQR). This is the strongest evidence in this run for the paper's "format of the belief matters" claim — it just doesn't show up as cleanly in raw return at this $N$.
+- Getting a usable result out of this environment required two live fixes made during this evaluation, documented in Methodology Notes below: a reward-farming bug (repeat exploits on an already-owned node paid full reward indefinitely) and a myopic-objective bug (the "maximize immediate reward" system prompt made blind exploitation rational regardless of belief quality, at this environment's 50% per-node vulnerability rate).
 
-### Performance Summary: The Sufficiency Gap Quantified
+**Ablation results ($N=25$ seeds each, same metrics):**
 
-Both environments are directionally consistent with the core thesis that the performance gap grows with observation noise and state space size:
+| Ablation | Avg. Return | Coverage | Success Rate | Mean Entropy |
+| :--- | :--- | :--- | :--- | :--- |
+| Standard BSE | 6.10 | 47.3% | 16.0% | 3.155 |
+| AB1 (drop prediction step) | −0.01 | 44.0% | 13.7% | 3.199 |
+| AB2 (drop observation step) | −6.07 | 26.7% | 11.1% | 4.159 (=ln 64, uniform forever) |
+| AB9 (temperature 1.0) | 11.79 | 46.7% | 19.1% | 2.875 |
 
-$$\text{Performance Gain} \approx f(\text{Observation Noise}, \text{State Space Size})$$
+- **AB2** again shows the theoretically-expected clean failure: entropy pinned at exactly $\ln 64$ (never leaves the uniform prior) and the worst coverage of the four configurations.
+- **AB1 shows almost no degradation here — this contradicts the paper's prediction of "severe degradation on the attack graph" for AB1, and the reason is a known environment limitation, not a surprising empirical result:** `environment.py`'s transition kernel `T` is the identity matrix for every action (patch/exploit transition dynamics are unimplemented), so "dropping the prediction step" drops an operation that was already a no-op. This ablation would need real patch/exploit state transitions implemented before it can test what the paper intends.
+- AB9 (temperature 1.0) is not obviously worse than standard at this $N$; more seeds would be needed to say anything about temperature robustness in this environment.
+- As with Tiger, the ablation run's "Standard BSE" row (return 6.10) doesn't match the main run's BSE row (return −2.80) on overlapping seeds — again attributable to `gpt-4o` sampling variance between separate live API calls, not a bug.
 
-- **Tiger POMDP:** Modest gain (+11.6%) in a low-noise 2-state domain—the reactive LLM occasionally succeeds by chance
-- **Attack Graph:** Larger gain (+60.6%) in a higher-noise 64-state domain—reactive history-conditioned policies degrade more visibly under ambient uncertainty
+### Methodology Notes (read before citing any of the above)
 
-**Conclusion:** Within this evaluation ($n=10$ paired-seed runs per condition, two environments), the BSE shows a **consistent, non-trivial improvement** over the reactive baseline that appears to scale with state-space size and noise. We stop short of calling this statistically confirmed given the sample size — a larger-$n$ study with formal significance testing (t-tests/bootstrapped CIs) and additional environments would be needed to establish the trend rigorously.
-These observations support the claim that without the Bayesian Posterior, the history conditioned agents suffer more from premature commitments and act impulsively without statistical confidence on noisy sensor data.
+1. **Sample size.** $N=40$ (main) / $N=25$ (ablations), single LLM-sampling seed, chosen for cost/time reasons (see below), not $N=300 \times 3$ as in the paper's full protocol. Confidence intervals above are wide, especially in the attack graph; treat point estimates as suggestive, not confirmatory.
+2. **Live-run non-determinism.** `gpt-4o` at $\tau=0.3$ is not deterministic across separate API calls. The "Standard_BSE" ablation configuration and the main run's "BSE" row use identical prompts/temperature but were separate live runs and do not match numerically, even on overlapping seeds. This is expected and is called out explicitly rather than papered over.
+3. **Two bugs found and fixed during this evaluation, before any numbers were collected:**
+   - *Prompt fairness*: an earlier draft of the BSE prompt hard-coded the exact decision threshold and worked arithmetic ("opening at 85% confidence yields −6.5 expected value... only open above 95%"), which spoon-feeds BSE the answer instead of letting the LLM derive it from the belief. All three methods now share one identical system prompt; only the state representation in the user prompt differs.
+   - *Attack-graph reward-farming*: exploiting an already-compromised node originally paid full reward (+20) every time, so the "optimal" policy degenerated into repeatedly exploiting one lucky node instead of exploring the network. Fixed so repeat exploits on an already-owned node pay zero reward, and the prompt tells the agent which nodes are already compromised.
+   - *Attack-graph myopic objective*: with a 50%-per-node vulnerability prior and a literal "maximize immediate reward" system prompt (as used for Tiger, and as read from the paper's Section VII configuration), blind exploitation has positive one-step expected value regardless of belief quality, so all three methods degenerated into ignoring their belief entirely. The attack-graph system prompt was changed to ask for expected discounted return over the remaining horizon (applied identically to all three methods) to make scanning-before-exploiting a rational strategy again.
+4. **Decision-consistency (JSD) measurement is a reduced, opportunistic version of the paper's protocol.** The paper specifies 200 pre-selected belief-equivalent history pairs with $K=32$ resamples each. Here, up to 10 (Tiger) / 8 (attack graph) belief-collision groups are found opportunistically from the main run's own trajectories (steps whose *exact* Bayes posterior, rounded to 2 decimals for Tiger / per-node marginals for the attack graph, matches across different raw prompts), each resampled $K=5$ times. Tiger found zero qualifying groups at $N=40$; the attack graph found 24.
+5. **Environment limitations carried over from `environment.py`, not introduced by this evaluation:** the attack graph's `patch` action and node-dependency lateral-movement topology are unimplemented (transition kernel is the identity for every action); node vulnerability is drawn i.i.d. per node rather than propagated through the graph. These limit what AB1 and AB2 can actually demonstrate in this environment (see ablation notes above).
+6. **What this run does and does not support.** It supports: BSE clearly outperforming Reactive/NL-Tracker on the Tiger POMDP (both in return and calibration) at $N=40$, with a plausible causal story (more listens before committing). It does **not** support a clean version of the same claim on the attack graph — returns overlap too much to distinguish the methods, though BSE and NL-Tracker do show meaningfully better decision consistency and coverage than Reactive. It does not test Chain-of-Thought, ReAct, QMDP, POMCP, or ablations AB3–AB8/AB10 at all.
 
-**Notes:** Although we have emperically seen that the reduction in sufficiency gap is huge for larger state space, there is always a problem with state explosion. The use cases we have considered had binary states eg. for tiger POMDP we had get_treasure or eaten_by_tiger and similarly for the network graph we have considered each node in the network had the state "vulnerable" or "hardened". But if the state space increases exponentially then computational hit is huge.
+Raw per-episode data and full run configuration: `logs/2026-09-02/tiger_full_eval_results.json`, `logs/2026-09-02/tiger_ablations_eval_results.json`, `logs/2026-09-02/attack_full_eval_results.json`, `logs/2026-09-02/attack_ablations_eval_results.json`.
 
 ---
 
